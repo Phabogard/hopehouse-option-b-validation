@@ -1,11 +1,39 @@
-<div align="center">
+# hopehouse-platform
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+Plateforme numérique de gestion des services, paiements et abonnements.
 
-  <h1>Built with AI Studio</h2>
+## Statut
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+Socle MVP initial de Hope House ERP.
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+## Stack actuelle
 
-</div>
+- Node.js 20+
+- TypeScript
+- API HTTP native Node.js
+- Tests avec `node:test`
+
+## Commandes
+
+```bash
+npm install
+npm run build
+npm test
+npm run dev
+```
+
+## Structure
+
+```text
+docs/       Documents de conception
+database/   Schéma conceptuel SQL initial
+src/        API MVP TypeScript modulaire
+tests/      Tests automatisés
+```
+
+## Principes
+
+- Règles métier conformes au Document n°1.
+- RBAC contrôlé côté serveur.
+- Audit prévu pour les actions sensibles.
+- Suppression physique évitée pour les données critiques.

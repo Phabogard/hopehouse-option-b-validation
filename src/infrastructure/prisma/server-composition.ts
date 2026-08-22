@@ -1,0 +1,37 @@
+import type { Server } from 'node:http';
+import { createHopeHouseServer } from '../../app.js';
+import { AuditLogService } from '../../modules/audit/audit-log.js';
+import { PrismaAuditLogRepository } from './audit-log-repository.js';
+import { PrismaAuthRuntimeContext, resolvePrismaAuthSecurityPolicy, type PrismaAuthRuntimeClient, type PrismaAuthRuntimeOptions } from './auth-runtime.js';
+import { createPrismaClient } from './client.js';
+
+export interface PrismaHopeHouseServerOptions {
+  readonly auth?: PrismaAuthRuntimeOptions;
+}
+
+export interface PrismaHopeHouseServerComposition {
+  readonly server: Server;
+  readonly authRuntime: PrismaAuthRuntimeContext;
+  close(): Promise<void>;
+}
+
+export async function createPrismaHopeHouseServer(options: PrismaHopeHouseServerOptions = {}): Promise<PrismaHopeHouseServerComposition> {
+  const authOptions = options.auth ?? {};
+  const client = await createPrismaClient<PrismaAuthRuntimeClient>({
+    ...(authOptions.prisma ?? {}),
+    databaseUrl: authOptions.databaseUrl ?? authOptions.prisma?.databaseUrl,
+  });
+  const policy = await resolvePrismaAuthSecurityPolicy(client, authOptions.policy);
+  const authRuntime = new PrismaAuthRuntimeContext(client, { ...authOptions, policy });
+  const audit = new AuditLogService(new PrismaAuditLogRepository(client));
+  const server = createHopeHouseServer({ authRuntime, audit });
+
+  return Object.freeze({
+    server,
+    authRuntime,
+    async close(): Promise<void> {
+      await new Promise<void>((resolve) => server.close(resolve));
+      await client.$disconnect();
+    },
+  });
+}

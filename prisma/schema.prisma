@@ -1,0 +1,535 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Role {
+  id          String @id
+  name        String @unique
+  description String
+
+  users User[]
+
+  @@map("roles")
+}
+
+enum UserStatus {
+  active
+  inactive
+  suspended
+  archived
+}
+
+enum CredentialStatus {
+  active
+  disabled
+  rotated
+  archived
+}
+
+enum DeviceStatus {
+  pending
+  trusted
+  untrusted
+  revoked
+  archived
+}
+
+enum SessionStatus {
+  active
+  revoked
+  expired
+  archived
+}
+
+enum RefreshTokenStatus {
+  active
+  rotated
+  revoked
+  expired
+  reused
+}
+
+enum LoginAttemptOutcome {
+  succeeded
+  failed
+  blocked
+}
+
+enum SecurityEventSeverity {
+  info
+  medium
+  major
+  critical
+}
+
+enum PasswordResetStatus {
+  pending
+  completed
+  expired
+  revoked
+}
+
+enum TwoFactorSettingStatus {
+  active
+  inactive
+  archived
+}
+
+enum TwoFactorChallengeStatus {
+  pending
+  succeeded
+  failed
+  expired
+}
+
+enum AppSettingStatus {
+  draft
+  active
+  archived
+}
+
+model User {
+  id          String     @id
+  email       String     @unique
+  displayName String     @map("display_name")
+  status      UserStatus
+  roleId      String     @map("role_id")
+  role        Role       @relation(fields: [roleId], references: [id])
+  createdAt   DateTime   @db.Timestamptz(3) @map("created_at")
+  updatedAt   DateTime   @db.Timestamptz(3) @map("updated_at")
+
+  credentials             AuthCredential[]
+  deviceFingerprints      DeviceFingerprint[]
+  loginSessions           LoginSession[]
+  loginAttempts           LoginAttempt[]
+  securityEvents          SecurityEvent[]       @relation("SecurityEventUser")
+  actorSecurityEvents     SecurityEvent[]       @relation("SecurityEventActor")
+  passwordResetRequests   PasswordResetRequest[]
+  twoFactorChallenges     TwoFactorChallenge[]
+  createdAppSettings      AppSetting[]          @relation("AppSettingCreatedBy")
+  updatedAppSettings      AppSetting[]          @relation("AppSettingUpdatedBy")
+  revokedDevices          DeviceFingerprint[]   @relation("DeviceRevokedBy")
+  revokedSessions         LoginSession[]        @relation("SessionRevokedBy")
+  adminAccessLogsAsActor  AdminAccessLog[]      @relation("AdminAccessLogActor")
+  adminAccessLogsAsTarget AdminAccessLog[]      @relation("AdminAccessLogTarget")
+
+  @@index([status])
+  @@index([roleId])
+  @@map("users")
+}
+
+model AppSetting {
+  id              String           @id
+  namespace       String
+  key             String
+  scopeType       String           @map("scope_type")
+  scopeId         String?          @map("scope_id")
+  status          AppSettingStatus
+  value           Json             @map("value_json")
+  startsAt        DateTime?        @db.Timestamptz(3) @map("starts_at")
+  endsAt          DateTime?        @db.Timestamptz(3) @map("ends_at")
+  createdByUserId String?          @map("created_by_user_id")
+  updatedByUserId String?          @map("updated_by_user_id")
+  createdAt       DateTime         @db.Timestamptz(3) @map("created_at")
+  updatedAt       DateTime         @db.Timestamptz(3) @map("updated_at")
+  metadata        Json             @map("metadata_json")
+
+  createdBy User? @relation("AppSettingCreatedBy", fields: [createdByUserId], references: [id])
+  updatedBy User? @relation("AppSettingUpdatedBy", fields: [updatedByUserId], references: [id])
+
+  // PostgreSQL contract enforces logical uniqueness with a NULLS NOT DISTINCT unique index.
+  // Prisma cannot express that index variant directly, so migrations must preserve it explicitly.
+  @@index([namespace, key, scopeType, scopeId, status])
+  @@index([namespace, key, status])
+  @@index([scopeType, scopeId, status])
+  @@index([startsAt, endsAt])
+  @@map("app_settings")
+}
+
+model AuthCredential {
+  id             String           @id
+  userId         String           @map("user_id")
+  credentialType String           @map("credential_type")
+  credentialHash String           @map("credential_hash")
+  status         CredentialStatus
+  lastChangedAt  DateTime         @db.Timestamptz(3) @map("last_changed_at")
+  mustRotateAt   DateTime?        @db.Timestamptz(3) @map("must_rotate_at")
+  createdAt      DateTime         @db.Timestamptz(3) @map("created_at")
+  updatedAt      DateTime         @db.Timestamptz(3) @map("updated_at")
+  metadata       Json             @map("metadata_json")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, credentialType, status])
+  @@index([mustRotateAt])
+  @@map("auth_credentials")
+}
+
+model DeviceFingerprint {
+  id              String       @id
+  userId          String       @map("user_id")
+  fingerprintHash String       @map("fingerprint_hash")
+  label           String?
+  status          DeviceStatus
+  firstSeenAt     DateTime     @db.Timestamptz(3) @map("first_seen_at")
+  lastSeenAt      DateTime     @db.Timestamptz(3) @map("last_seen_at")
+  revokedAt       DateTime?    @db.Timestamptz(3) @map("revoked_at")
+  revokedByUserId String?      @map("revoked_by_user_id")
+  metadata        Json         @map("metadata_json")
+
+  user          User           @relation(fields: [userId], references: [id])
+  revokedBy     User?          @relation("DeviceRevokedBy", fields: [revokedByUserId], references: [id])
+  sessions      LoginSession[]
+  loginAttempts LoginAttempt[]
+
+  @@unique([userId, fingerprintHash])
+  @@index([userId, status])
+  @@index([lastSeenAt])
+  @@index([revokedAt])
+  @@map("device_fingerprints")
+}
+
+model LoginSession {
+  id                  String        @id
+  userId              String        @map("user_id")
+  deviceFingerprintId String?       @map("device_fingerprint_id")
+  status              SessionStatus
+  issuedAt            DateTime      @db.Timestamptz(3) @map("issued_at")
+  expiresAt           DateTime      @db.Timestamptz(3) @map("expires_at")
+  idleExpiresAt       DateTime?     @db.Timestamptz(3) @map("idle_expires_at")
+  lastSeenAt           DateTime?     @db.Timestamptz(3) @map("last_seen_at")
+  revokedAt            DateTime?     @db.Timestamptz(3) @map("revoked_at")
+  revokedByUserId      String?       @map("revoked_by_user_id")
+  revocationReason     String?       @map("revocation_reason")
+  metadata             Json          @map("metadata_json")
+
+  user                User                  @relation(fields: [userId], references: [id])
+  deviceFingerprint   DeviceFingerprint?    @relation(fields: [deviceFingerprintId], references: [id])
+  revokedBy           User?                 @relation("SessionRevokedBy", fields: [revokedByUserId], references: [id])
+  refreshTokens       SessionRefreshToken[]
+  twoFactorChallenges TwoFactorChallenge[]
+  adminAccessLogs     AdminAccessLog[]
+
+  @@index([userId, status])
+  @@index([deviceFingerprintId, status])
+  @@index([expiresAt])
+  @@index([idleExpiresAt])
+  @@index([revokedAt])
+  @@map("login_sessions")
+}
+
+model SessionRefreshToken {
+  id                String             @id
+  sessionId         String             @map("session_id")
+  tokenHash         String             @unique @map("token_hash")
+  status            RefreshTokenStatus
+  issuedAt          DateTime           @db.Timestamptz(3) @map("issued_at")
+  expiresAt         DateTime           @db.Timestamptz(3) @map("expires_at")
+  rotatedAt         DateTime?          @db.Timestamptz(3) @map("rotated_at")
+  revokedAt         DateTime?          @db.Timestamptz(3) @map("revoked_at")
+  replacedByTokenId String?            @map("replaced_by_token_id")
+  metadata          Json               @map("metadata_json")
+
+  session          LoginSession          @relation(fields: [sessionId], references: [id])
+  replacedByToken  SessionRefreshToken?  @relation("RefreshTokenReplacement", fields: [replacedByTokenId], references: [id])
+  replacesTokens   SessionRefreshToken[] @relation("RefreshTokenReplacement")
+
+  @@index([sessionId, status])
+  @@index([expiresAt])
+  @@index([replacedByTokenId])
+  @@map("session_refresh_tokens")
+}
+
+model LoginAttempt {
+  id                  String              @id
+  userId              String?             @map("user_id")
+  identifierHash      String              @map("identifier_hash")
+  deviceFingerprintId String?             @map("device_fingerprint_id")
+  ipAddressHash       String?             @map("ip_address_hash")
+  outcome             LoginAttemptOutcome
+  failureReason       String?             @map("failure_reason")
+  occurredAt          DateTime            @db.Timestamptz(3) @map("occurred_at")
+  metadata            Json                @map("metadata_json")
+
+  user              User?              @relation(fields: [userId], references: [id])
+  deviceFingerprint DeviceFingerprint? @relation(fields: [deviceFingerprintId], references: [id])
+
+  @@index([identifierHash, outcome, occurredAt])
+  @@index([userId, occurredAt])
+  @@index([ipAddressHash, occurredAt])
+  @@index([deviceFingerprintId, occurredAt])
+  @@map("login_attempts")
+}
+
+model SecurityEvent {
+  id                String                @id
+  userId            String?               @map("user_id")
+  actorUserId       String?               @map("actor_user_id")
+  eventType         String                @map("event_type")
+  severity          SecurityEventSeverity
+  relatedEntityType String?               @map("related_entity_type")
+  relatedEntityId   String?               @map("related_entity_id")
+  occurredAt        DateTime              @db.Timestamptz(3) @map("occurred_at")
+  metadata          Json                   @map("metadata_json")
+
+  user  User? @relation("SecurityEventUser", fields: [userId], references: [id])
+  actor User? @relation("SecurityEventActor", fields: [actorUserId], references: [id])
+
+  @@index([userId, occurredAt])
+  @@index([actorUserId, occurredAt])
+  @@index([eventType, occurredAt])
+  @@index([severity, occurredAt])
+  @@index([relatedEntityType, relatedEntityId])
+  @@map("security_events")
+}
+
+model PasswordResetRequest {
+  id             String              @id
+  userId         String?             @map("user_id")
+  identifierHash String              @map("identifier_hash")
+  tokenHash      String              @unique @map("token_hash")
+  status         PasswordResetStatus
+  expiresAt      DateTime            @db.Timestamptz(3) @map("expires_at")
+  completedAt    DateTime?           @db.Timestamptz(3) @map("completed_at")
+  createdAt      DateTime             @db.Timestamptz(3) @map("created_at")
+  metadata       Json                @map("metadata_json")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([identifierHash, createdAt])
+  @@index([userId, status, createdAt])
+  @@index([status, expiresAt])
+  @@map("password_reset_requests")
+}
+
+model TwoFactorSetting {
+  id            String                 @id
+  scopeType     String                 @map("scope_type")
+  scopeId       String?                @map("scope_id")
+  method        String
+  status        TwoFactorSettingStatus
+  configuration Json                   @map("configuration_json")
+  createdAt     DateTime               @db.Timestamptz(3) @map("created_at")
+  updatedAt     DateTime               @db.Timestamptz(3) @map("updated_at")
+  metadata      Json                   @map("metadata_json")
+
+  @@index([scopeType, scopeId, status])
+  @@index([method, status])
+  @@map("two_factor_settings")
+}
+
+model TwoFactorChallenge {
+  id            String                   @id
+  userId        String                   @map("user_id")
+  sessionId     String?                  @map("session_id")
+  action        String
+  method        String
+  challengeHash String?                  @map("challenge_hash")
+  status        TwoFactorChallengeStatus
+  attemptCount  Int                      @map("attempt_count")
+  maxAttempts   Int                      @map("max_attempts")
+  expiresAt     DateTime                 @db.Timestamptz(3) @map("expires_at")
+  verifiedAt    DateTime?                @db.Timestamptz(3) @map("verified_at")
+  createdAt     DateTime                 @db.Timestamptz(3) @map("created_at")
+  updatedAt     DateTime                 @db.Timestamptz(3) @map("updated_at")
+  metadata      Json                     @map("metadata_json")
+
+  user    User          @relation(fields: [userId], references: [id])
+  session LoginSession? @relation(fields: [sessionId], references: [id])
+
+  @@index([userId, status, createdAt])
+  @@index([status, expiresAt])
+  @@index([sessionId])
+  @@index([action, status, createdAt])
+  @@map("two_factor_challenges")
+}
+
+model AdminAccessLog {
+  id            String    @id
+  actorUserId   String    @map("actor_user_id")
+  targetUserId  String?   @map("target_user_id")
+  action        String
+  reason        String
+  sessionId     String?   @map("session_id")
+  startedAt     DateTime  @db.Timestamptz(3) @map("started_at")
+  endedAt       DateTime? @db.Timestamptz(3) @map("ended_at")
+  metadata      Json      @map("metadata_json")
+
+  actor  User          @relation("AdminAccessLogActor", fields: [actorUserId], references: [id])
+  target User?         @relation("AdminAccessLogTarget", fields: [targetUserId], references: [id])
+  session LoginSession? @relation(fields: [sessionId], references: [id])
+
+  @@index([actorUserId, startedAt])
+  @@index([targetUserId, startedAt])
+  @@index([action, startedAt])
+  @@index([sessionId])
+  @@map("admin_access_logs")
+}
+
+model OutboxMessage {
+  id            String   @id
+  eventType     String   @map("event_type")
+  schemaVersion Int      @map("schema_version")
+  occurredAt    DateTime @db.Timestamptz(3) @map("occurred_at")
+  correlationId String   @map("correlation_id")
+  causationId   String?  @map("causation_id")
+  aggregateId   String   @map("aggregate_id")
+  aggregateType String   @map("aggregate_type")
+  payloadJson   Json     @map("payload_json")
+  attempts      Int      @default(0)
+  availableAt   DateTime @db.Timestamptz(3) @map("available_at")
+  publishedAt   DateTime? @map("published_at") @db.Timestamptz(3)
+  lastError     String?  @map("last_error")
+  leaseOwner    String?  @map("lease_owner")
+  leaseUntil    DateTime? @map("lease_until") @db.Timestamptz(3)
+  createdAt     DateTime @default(now()) @db.Timestamptz(3) @map("created_at")
+
+  // PostgreSQL manages outbox_messages_pending_idx and outbox_messages_lease_idx as partial indexes
+  // because Prisma 6.13 cannot represent WHERE predicates. Keep the exact SQL definitions
+  // in prisma/migrations/20260817100000_shared_kernel_outbox/migration.sql; do not
+  // replace them with ordinary Prisma indexes because that would widen the indexed rows.
+  @@index([correlationId, occurredAt], map: "outbox_messages_correlation_idx")
+  @@index([aggregateType, aggregateId, occurredAt], map: "outbox_messages_aggregate_idx")
+  @@index([eventType, occurredAt], map: "outbox_messages_type_idx")
+  @@map("outbox_messages")
+}
+
+model AuditLog {
+  id          String   @id
+  actorUserId String?  @map("actor_user_id")
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String   @map("entity_id")
+  outcome     String
+  occurredAt  DateTime @db.Timestamptz(3) @map("occurred_at")
+  metadata    Json     @map("metadata_json")
+
+  @@index([actorUserId, occurredAt])
+  @@index([entityType, entityId, occurredAt])
+  @@index([action, occurredAt])
+  @@index([outcome, occurredAt])
+  @@map("audit_logs")
+}
+
+// ==========================================
+// MODULE WALLETS (OPTION B - FK COMPOSITES)
+// ==========================================
+
+enum WalletStatus {
+  ACTIVE
+  FROZEN
+  CLOSED
+}
+
+enum WalletTransactionType {
+  CREDIT
+  DEBIT
+  RESERVATION_HOLD
+  RESERVATION_RELEASE
+  RESERVATION_CAPTURE
+  ROLLBACK
+}
+
+enum WalletTransactionStatus {
+  SETTLED
+  FAILED
+}
+
+enum WalletReservationStatus {
+  ACTIVE
+  RELEASED
+  CAPTURED
+  ROLLED_BACK
+}
+
+model Wallet {
+  id        String       @id @map("id")
+  ownerType String       @map("owner_type")
+  ownerId   String       @map("owner_id")
+  status    WalletStatus @default(ACTIVE) @map("status")
+  createdAt DateTime     @default(now()) @db.Timestamptz(3) @map("created_at")
+  updatedAt DateTime     @updatedAt @db.Timestamptz(3) @map("updated_at")
+
+  balances     WalletBalance[]
+  transactions WalletTransaction[]
+  reservations WalletReservation[]
+
+  @@unique([ownerType, ownerId], name: "wallets_owner_type_owner_id_unique")
+  @@index([ownerType, ownerId], name: "wallets_owner_lookup_idx")
+  @@map("wallets")
+}
+
+model WalletBalance {
+  walletId       String   @map("wallet_id")
+  currency       String   @map("currency")
+  availableCents BigInt   @default(0) @map("available_cents")
+  reservedCents  BigInt   @default(0) @map("reserved_cents")
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3) @map("updated_at")
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([walletId, currency])
+  @@index([walletId], name: "wallet_balances_wallet_id_idx")
+  @@map("wallet_balances")
+}
+
+model WalletTransaction {
+  id                      String                  @id @map("id")
+  walletId                String                  @map("wallet_id")
+  currency                String                  @map("currency")
+  amountCents             BigInt                  @map("amount_cents")
+  type                    WalletTransactionType   @map("type")
+  status                  WalletTransactionStatus @map("status")
+  actorId                 String                  @map("actor_id")
+  transactionKey          String?                 @map("transaction_key")
+  relatedEntityType       String?                 @map("related_entity_type")
+  relatedEntityId         String?                 @map("related_entity_id")
+  reversalOfTransactionId String?                 @map("reversal_of_transaction_id")
+  occurredAt              DateTime                @default(now()) @db.Timestamptz(3) @map("occurred_at")
+  metadataJson            Json                    @map("metadata_json")
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  // Relation auto-référentielle COMPOSITE pour rollback cross-wallet
+  reversalOf WalletTransaction?  @relation("TransactionReversals", fields: [walletId, reversalOfTransactionId], references: [walletId, id], onDelete: Restrict, onUpdate: Restrict)
+  reversals  WalletTransaction[] @relation("TransactionReversals")
+
+  // Relations composites Option B pour les réservations
+  createdReservations WalletReservation[] @relation("ReservationCreatedByTx")
+  closedReservations  WalletReservation[] @relation("ReservationClosedByTx")
+
+  // Contrainte unique composite obligatoire pour permettre les FK composites cibles
+  @@unique([walletId, id], name: "wallet_transactions_wallet_id_id_unique")
+  @@index([walletId, occurredAt(sort: Desc)], name: "wallet_transactions_occurred_at_idx")
+  @@map("wallet_transactions")
+}
+
+model WalletReservation {
+  id                     String                  @id @map("id")
+  walletId               String                  @map("wallet_id")
+  currency               String                  @map("currency")
+  amountCents            BigInt                  @map("amount_cents")
+  status                 WalletReservationStatus @default(ACTIVE) @map("status")
+  relatedEntityType      String?                 @map("related_entity_type")
+  relatedEntityId        String?                 @map("related_entity_id")
+  createdByTransactionId String                  @map("created_by_transaction_id")
+  closedByTransactionId  String?                 @map("closed_by_transaction_id")
+  createdAt              DateTime                @default(now()) @db.Timestamptz(3) @map("created_at")
+  updatedAt              DateTime                @updatedAt @db.Timestamptz(3) @map("updated_at")
+  metadataJson           Json                    @map("metadata_json")
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  // Option B : FK composites structurelles PostgreSQL
+  createdByTransaction WalletTransaction  @relation("ReservationCreatedByTx", fields: [walletId, createdByTransactionId], references: [walletId, id], onDelete: Restrict, onUpdate: Restrict)
+  closedByTransaction    WalletTransaction? @relation("ReservationClosedByTx", fields: [walletId, closedByTransactionId], references: [walletId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([walletId, status], name: "wallet_reservations_wallet_status_idx")
+  @@map("wallet_reservations")
+}
+
